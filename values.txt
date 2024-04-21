@@ -1,0 +1,11 @@
+Overall Precision: 0.7817994762439207
+Overall Recall: 0.7817994762439207
+
+Overall Precision: 0.7818930041152263
+Overall Recall: 0.7818930041152263
+
+Overall Precision: 0.8098808988812797
+Overall Recall: 0.8228582117471006
+
+Overall Precision: 0.8117026461730617
+Overall Recall: 0.8267396184062851
