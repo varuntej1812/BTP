@@ -32,3 +32,14 @@ SVM
            Accuracy  - 82.67%
            Precision - 81.17%
            Recall    - 82.67% 
+
+CNN
+    Multi 
+            Accuracy  - 79.48%
+            Precision - 78%
+            Recall    - 79% 
+
+LR
+            Accuracy  - 82.3%
+            Precision - 81%
+            Recall    - 82% 
