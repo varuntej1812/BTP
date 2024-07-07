@@ -43,3 +43,126 @@ LR
             Accuracy  - 82.3%
             Precision - 81%
             Recall    - 82% 
+
+
+
+import pandas as pd
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, TensorDataset, RandomSampler, SequentialSampler
+from transformers import RobertaTokenizer, RobertaForSequenceClassification, AdamW, get_linear_schedule_with_warmup
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import time
+
+# Load the dataset
+df = pd.read_csv('final_dataset.csv')
+
+# Map target to 0 and 1 if necessary
+df['target'] = df['target'].map({'fake': 0, 'genuine': 1})
+
+# Split the dataset
+train_texts, val_texts, train_labels, val_labels = train_test_split(df['text'], df['target'], test_size=0.2, random_state=42)
+
+# Load RoBERTa tokenizer
+tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+
+# Tokenize the texts
+train_encodings = tokenizer(list(train_texts), truncation=True, padding=True, max_length=128)
+val_encodings = tokenizer(list(val_texts), truncation=True, padding=True, max_length=128)
+
+# Convert to tensors
+train_inputs = torch.tensor(train_encodings['input_ids'])
+train_masks = torch.tensor(train_encodings['attention_mask'])
+train_labels = torch.tensor(train_labels.values)
+
+val_inputs = torch.tensor(val_encodings['input_ids'])
+val_masks = torch.tensor(val_encodings['attention_mask'])
+val_labels = torch.tensor(val_labels.values)
+
+# Create DataLoader
+batch_size = 16  # Increase batch size if possible
+train_data = TensorDataset(train_inputs, train_masks, train_labels)
+train_sampler = RandomSampler(train_data)
+train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=batch_size, num_workers=4)
+
+val_data = TensorDataset(val_inputs, val_masks, val_labels)
+val_sampler = SequentialSampler(val_data)
+val_dataloader = DataLoader(val_data, sampler=val_sampler, batch_size=batch_size, num_workers=4)
+
+# Load pre-trained RoBERTa model
+model = RobertaForSequenceClassification.from_pretrained('roberta-base', num_labels=2)
+
+# Move model to GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
+
+# Set up optimizer and learning rate scheduler
+optimizer = AdamW(model.parameters(), lr=2e-5, eps=1e-8)
+total_steps = len(train_dataloader) * 3  # 3 epochs
+scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
+
+# Mixed precision training
+scaler = torch.cuda.amp.GradScaler()
+
+# Training function
+def train(epoch, model, train_dataloader, optimizer, scheduler, scaler):
+    model.train()
+    total_loss = 0
+    for step, batch in enumerate(train_dataloader):
+        b_input_ids, b_input_mask, b_labels = [x.to(device) for x in batch]
+
+        model.zero_grad()
+        
+        with torch.cuda.amp.autocast():
+            outputs = model(b_input_ids, attention_mask=b_input_mask, labels=b_labels)
+            loss = outputs.loss
+
+        total_loss += loss.item()
+        
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
+        scheduler.step()
+
+    avg_loss = total_loss / len(train_dataloader)
+    print(f'Epoch {epoch+1}, Loss: {avg_loss:.3f}')
+
+# Validation function
+def evaluate(model, val_dataloader):
+    model.eval()
+    predictions, true_labels = [], []
+    for batch in val_dataloader:
+        b_input_ids, b_input_mask, b_labels = [x.to(device) for x in batch]
+
+        with torch.no_grad():
+            outputs = model(b_input_ids, attention_mask=b_input_mask)
+        
+        logits = outputs.logits
+        predictions.append(logits.argmax(dim=-1).cpu().numpy())
+        true_labels.append(b_labels.cpu().numpy())
+
+    predictions = np.concatenate(predictions)
+    true_labels = np.concatenate(true_labels)
+    return predictions, true_labels
+
+# Train the model
+start_time = time.time()
+for epoch in range(3):
+    train(epoch, model, train_dataloader, optimizer, scheduler, scaler)
+end_time = time.time()
+print(f"Training time: {(end_time - start_time) / 60:.2f} minutes")
+
+# Evaluate the model
+predictions, true_labels = evaluate(model, val_dataloader)
+
+# Calculate performance metrics
+accuracy = accuracy_score(true_labels, predictions)
+precision = precision_score(true_labels, predictions)
+recall = recall_score(true_labels, predictions)
+f1 = f1_score(true_labels, predictions)
+
+print(f'Accuracy: {accuracy:.2f}')
+print(f'Precision: {precision:.2f}')
+print(f'Recall: {recall:.2f}')
+print(f'F1 Score: {f1:.2f}')
